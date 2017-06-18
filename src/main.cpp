@@ -70,8 +70,9 @@ int main() {
 
   // MPC is initialized here!
   MPC mpc;
+  double last_steering_value = 0.0;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc, &last_steering_value](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -91,15 +92,50 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          double steering_angle = j[1]["steering_angle"];
+          double throttle = j[1]["throttle"];
+          
+          // project forward 0.1 seconds to account for latency
+          double lag_t = 0.1;
+					double lag_v = v + throttle * lag_t;
+					double avg_v = (v+lag_v)/2;
+					double lag_psi = psi - steering_angle / 2.67 * lag_t * avg_v;
+					double avg_psi = (psi+lag_psi)/2;
+					px = px + cos(avg_psi) * avg_v * lag_t;
+					py = py + sin(avg_psi) * avg_v * lag_t;
+					psi = lag_psi;
+					v = lag_v;
+          
+          // Convert waypoints to eigen vectors and vehicle coordinates
+          Eigen::VectorXd new_ptsx(ptsx.size());
+          Eigen::VectorXd new_ptsy(ptsy.size());
+          for (int i = 0; i < ptsx.size(); i++) {
+						double current_x = ptsx[i]-px;
+						double current_y = ptsy[i]-py;
+						new_ptsx[i] = current_x * cos(-psi) - current_y * sin(-psi);
+						new_ptsy[i] = current_x * sin(-psi) + current_y * cos(-psi);
+						}
+          
+          // Fit a 3rd order polynomial to the waypoints
+          auto coeffs = polyfit(new_ptsx, new_ptsy, 3);
+          
+					// The cross track error is calculated by evaluating at polynomial at x, f(x)
+					// and subtracting y.
+					double cte = polyeval(coeffs, 0);
+					
+					// Due to the sign starting at 0, the orientation error is -f'(x).
+					// derivative of coeffs[0] + coeffs[1] * x -> coeffs[1]
+					double epsi = -atan(coeffs[1]);
+					
+					// Pack current state
+					Eigen::VectorXd state(6);
+					state << 0, 0, 0, v, cte, epsi;
 
-          /*
-          * TODO: Calculate steeering angle and throttle using MPC.
-          *
-          * Both are in between [-1, 1].
-          *
-          */
-          double steer_value;
-          double throttle_value;
+          // Calculate steeering angle and throttle using MPC.
+          auto solution = mpc.Solve(state, coeffs);
+          double steer_value = (solution[0][0]/0.436332*-1 + last_steering_value*2)/3; //Average with old steering value to smoothen
+          last_steering_value = steer_value;
+          double throttle_value = solution[0][1];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -107,13 +143,12 @@ int main() {
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
+          //Display the MPC predicted trajectory
+          vector<double> mpc_x_vals = solution[1];
+          vector<double> mpc_y_vals = solution[2];
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
-
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
@@ -123,6 +158,8 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
+          for (int i = 0; i < new_ptsx.size(); i++) {next_x_vals.push_back(new_ptsx[i]);}
+          for (int i = 0; i < new_ptsy.size(); i++) {next_y_vals.push_back(new_ptsy[i]);}
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;

@@ -6,10 +6,10 @@
 using CppAD::AD;
 
 // MPC parameters
-size_t N = 25;
-double dt = 0.05;
+size_t N = 15;
+double dt = 0.1;
 const double Lf = 2.67;
-double ref_v = 40;
+double ref_v = 50;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -42,21 +42,21 @@ class FG_eval {
 
     // The part of the cost based on the reference state.
     for (int t = 0; t < N; t++) {
-      fg[0] += CppAD::pow(vars[cte_start + t], 2);
-      fg[0] += CppAD::pow(vars[epsi_start + t], 2);
-      fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
+      fg[0] += CppAD::pow(vars[cte_start + t], 2)*800.0;
+      fg[0] += CppAD::pow(vars[epsi_start + t], 2)*800.0;
+      fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2)*0.02;
     }
 
     // Minimize the use of actuators.
     for (int t = 0; t < N - 1; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t], 2);
+      fg[0] += CppAD::pow(vars[delta_start + t], 2)*0.8;
+      fg[0] += CppAD::pow(vars[a_start + t], 2)*0.2;
     }
 
     // Minimize the value gap between sequential actuations.
     for (int t = 0; t < N - 2; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+      fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2)*8.0;
+      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2)*2.0;
     }
     
     
@@ -129,7 +129,7 @@ class FG_eval {
 MPC::MPC() {}
 MPC::~MPC() {}
 
-vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
+std::vector<std::vector<double>> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   bool ok = true;
   size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
@@ -226,7 +226,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // if you uncomment both the computation time should go up in orders of
   // magnitude.
   options += "Sparse  true        forward\n";
-  options += "Sparse  true        reverse\n";
+  //options += "Sparse  true        reverse\n";
   // NOTE: Currently the solver has a maximum time limit of 0.5 seconds.
   // Change this as you see fit.
   options += "Numeric max_cpu_time          0.5\n";
@@ -245,10 +245,21 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Cost
   auto cost = solution.obj_value;
   std::cout << "Cost " << cost << std::endl;
+  
+  // prepare output
+  std::vector<double> initial_actuators;
+  initial_actuators.push_back((double)solution.x[delta_start]);
+  initial_actuators.push_back((double)solution.x[a_start]);
+	std::vector<double> x_path;
+	std::vector<double> y_path;
+	for (int i = x_start+1; i < y_start; i++) {x_path.push_back((double)solution.x[i]);}
+	for (int i = y_start+1; i < psi_start; i++) {y_path.push_back((double)solution.x[i]);}
+	std::vector<std::vector<double>> output;
+	output.push_back(initial_actuators);
+	output.push_back(x_path);
+	output.push_back(y_path);
 
-  // Return the first actuator values
-  return {solution.x[x_start + 1],   solution.x[y_start + 1],
-          solution.x[psi_start + 1], solution.x[v_start + 1],
-          solution.x[cte_start + 1], solution.x[epsi_start + 1],
-          solution.x[delta_start], solution.x[a_start]};
+  // Return the output
+  return output;
+  
 	}
