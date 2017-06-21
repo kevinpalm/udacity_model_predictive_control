@@ -135,6 +135,7 @@ int main() {
           auto solution = mpc.Solve(state, coeffs);
           double steer_value = (solution[0][0]/0.436332*-1 + last_steering_value*2)/3; //Average with old steering value to smoothen
           last_steering_value = steer_value;
+          //~ double steer_value = -solution[0][0]/0.436332;
           double throttle_value = solution[0][1];
 
           json msgJson;
